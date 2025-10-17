@@ -5,6 +5,8 @@ import torch
 
 from ..core.asr import load_model
 from ..core.streamer import LiveStreamer, StreamCfg
+from ..core.model_finder import find_presets, ModelPreset
+
 
 class Worker(QtCore.QObject):
     delta = QtCore.Signal(str)
@@ -56,6 +58,19 @@ class LiveTab(QtWidgets.QWidget):
         v = QtWidgets.QVBoxLayout(self)
 
         form = QtWidgets.QFormLayout()
+        self.preset = QtWidgets.QComboBox()
+        self.refreshBtn = QtWidgets.QPushButton("Odśwież listę")
+        wrap = QtWidgets.QHBoxLayout();
+        wrap.addWidget(self.preset, 1);
+        wrap.addWidget(self.refreshBtn)
+        wrapw = QtWidgets.QWidget();
+        wrapw.setLayout(wrap)
+        form.addRow("Zestaw modeli:", wrapw)
+
+        self._presets: list[ModelPreset] = []
+        self.refreshBtn.clicked.connect(self._refresh_models)
+        self.preset.currentIndexChanged.connect(self._apply_preset)
+
         self.mode = QtWidgets.QComboBox(); self.mode.addItems(["transcribe", "translate"])
         self.lang = QtWidgets.QComboBox()
         self.lang.addItems(["pl","en","de","fr","es","it","pt","ru","uk","cs","sk","hu","ro","nl","sv","no","da","fi","tr","ar","el","ja","ko","zh"])
@@ -80,7 +95,7 @@ class LiveTab(QtWidgets.QWidget):
 
         self.useMerged = QtWidgets.QCheckBox("Użyj scalonego modelu (merged)"); self.useMerged.setChecked(True)
         self.baseDir = QtWidgets.QLineEdit("whisper-small-local")
-        self.loraDir = QtWidgets.QLineEdit("whisper-small-pl-lora/lora_adapters")
+        self.loraDir = QtWidgets.QLineEdit("whisper-small-pl-lora")
         self.mergedDir = QtWidgets.QLineEdit("whisper-small-pl-merged")
         form.addRow(self.useMerged)
         form.addRow("Baza:", self.baseDir)
@@ -101,6 +116,8 @@ class LiveTab(QtWidgets.QWidget):
 
         self.start.clicked.connect(self._start)
         self.stop.clicked.connect(self._stop)
+
+        self._refresh_models()
 
     def _model_opts(self) -> dict:
         dev = self.device.currentText()
@@ -147,3 +164,23 @@ class LiveTab(QtWidgets.QWidget):
         if self.thread:
             self.thread.quit(); self.thread.wait(1500)
         self._set_enabled(True)
+
+    def _refresh_models(self):
+        self._presets = find_presets(".")
+        self.preset.clear()
+        for p in self._presets:
+            self.preset.addItem(p.name)
+        if self._presets:
+            self._apply_preset()
+
+    def _apply_preset(self):
+        if not self._presets:
+            return
+        p = self._presets[self.preset.currentIndex()]
+        self.useMerged.setChecked(p.use_merged)
+        self.baseDir.setText(str(p.base_dir))
+        if p.lora_dir:
+            self.loraDir.setText(str(p.lora_dir))
+        if p.merged_dir:
+            self.mergedDir.setText(str(p.merged_dir))
+
