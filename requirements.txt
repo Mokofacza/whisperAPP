@@ -1,0 +1,9 @@
+torch
+transformers
+peft
+sounddevice
+soundcard
+librosa
+webrtcvad
+PySide6
+jiwer
