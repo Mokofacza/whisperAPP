@@ -16,17 +16,24 @@ def run_full(
     eval_interval: int = 500,
     early_stop: int = 3,
 ):
-    args = [
-        sys.executable, str(SCRIPT),
-        "--data-dir", data_dir,
-        "--model-dir", model_dir,
-        "--output-dir", output_dir,
-        "--language", language,
-        "--task", task,
-        "--batch-size", str(batch_size),
-        "--lr", str(lr),
-        "--epochs", str(epochs),
-        "--eval-interval", str(eval_interval),
-        "--early-stop", str(early_stop),
-    ]
-    return subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    if SCRIPT.exists():
+        args = [
+            sys.executable, str(SCRIPT),
+            "--data-dir", data_dir,
+            "--model-dir", model_dir,
+            "--output-dir", output_dir,
+            "--language", language,
+            "--task", task,
+            "--batch-size", str(batch_size),
+            "--lr", str(lr),
+            "--epochs", str(epochs),
+            "--eval-interval", str(eval_interval),
+            "--early-stop", str(early_stop),
+        ]
+        return subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    code = (
+        "import sys; "
+        "print('Brak pliku train_whisper_full.py – trening pominięty.'); "
+        "sys.exit(0)"
+    )
+    return subprocess.Popen([sys.executable, "-c", code], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)

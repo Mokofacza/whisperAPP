@@ -8,7 +8,7 @@ class MergeTab(QtWidgets.QWidget):
         v = QtWidgets.QVBoxLayout(self)
 
         form = QtWidgets.QFormLayout()
-        self.base = QtWidgets.QLineEdit("whisper-small-local")
+        self.base = QtWidgets.QLineEdit("openai/whisper-small")
         self.adapters = QtWidgets.QLineEdit("whisper-small-pl-lora/lora_adapters")
         self.out = QtWidgets.QLineEdit("whisper-small-pl-merged")
         form.addRow("Baza (model):", self.base)

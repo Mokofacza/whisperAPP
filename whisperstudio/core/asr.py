@@ -1,6 +1,5 @@
 from __future__ import annotations
 from pathlib import Path
-from typing import Tuple
 import torch
 from transformers import WhisperForConditionalGeneration, WhisperProcessor
 from peft import PeftModel
@@ -10,113 +9,91 @@ from .constants import (
     DEFAULT_MODEL_BASE,
     DEFAULT_LORA_DIR,
     DEFAULT_MERGED_DIR,
+    DEFAULT_FULLFT_DIR,
 )
 
+def _resolve_device(device_str: str | None) -> torch.device:
+    if device_str in (None, "", "auto"):
+        return torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    return torch.device(device_str)
 
-def _resolve_lora_adapters_dir(lora_out_dir: Path | str) -> Path:
-    """
-    Zwraca katalog z adapterami LoRA.
-    Akceptuje zarówno `<lora_out_dir>` jak i `<lora_out_dir>/lora_adapters`.
-    """
-    p = Path(lora_out_dir)
-    # Bezpośrednio w katalogu
-    if (p / "adapter_config.json").exists():
-        return p
-    # W podkatalogu lora_adapters
-    if (p / "lora_adapters" / "adapter_config.json").exists():
-        return p / "lora_adapters"
-    raise FileNotFoundError(
-        f"Nie znaleziono adapterów LoRA. Oczekuję pliku 'adapter_config.json' w:\n"
-        f" - {p}\n"
-        f" - {p / 'lora_adapters'}"
-    )
+def _load_proc(repo_or_dir, language: str, task: str):
+    try:
+        return WhisperProcessor.from_pretrained(str(repo_or_dir), local_files_only=Path(str(repo_or_dir)).exists(),
+                                               language=language, task=task)
+    except Exception:
+        return WhisperProcessor.from_pretrained(str(repo_or_dir), local_files_only=False,
+                                               language=language, task=task)
 
+def _load_whisper(repo_or_dir):
+    try:
+        return WhisperForConditionalGeneration.from_pretrained(str(repo_or_dir),
+                                                               local_files_only=Path(str(repo_or_dir)).exists())
+    except Exception:
+        return WhisperForConditionalGeneration.from_pretrained(str(repo_or_dir), local_files_only=False)
 
 @torch.no_grad()
 def load_model(
+    *,
+    variant: str = "merged",          # "local" | "lora" | "merged" | "full"
     mode: str = "transcribe",
     language: str = "pl",
     device_str: str | None = None,
-    use_merged: bool = True,
-    base_dir: Path | str = DEFAULT_MODEL_BASE,
-    lora_out_dir: Path | str = DEFAULT_LORA_DIR,
-    merged_dir: Path | str = DEFAULT_MERGED_DIR,
+    base_dir: str | Path = DEFAULT_MODEL_BASE,
+    lora_out_dir: str | Path = DEFAULT_LORA_DIR,
+    merged_dir: str | Path = DEFAULT_MERGED_DIR,
 ):
     """
-    Zwraca: processor, model (Whisper lub PeftModel), device, generate_model
-    - `processor`: WhisperProcessor
-    - `model`: załadowany model (WhisperForConditionalGeneration lub PeftModel)
-    - `device`: torch.device
-    - `generate_model`: OBIEKT, na którym należy wywoływać .generate()
-                        (dla LoRA = PeftModel, dla merged/HF = Whisper)
+    Zwraca: processor, model (PEFT/merged/base), device, base_model (WhisperForConditionalGeneration)
     """
-    device = torch.device(device_str or ("cuda" if torch.cuda.is_available() else "cpu"))
+    device = _resolve_device(device_str)
 
-    if use_merged:
-        # HF lub scalony (merged) model – wszystko w jednym katalogu
-        processor = WhisperProcessor.from_pretrained(
-            str(merged_dir),
-            local_files_only=True,
-            language=language,
-            task=mode,
-        )
-        model = WhisperForConditionalGeneration.from_pretrained(
-            str(merged_dir),
-            local_files_only=True,
-        ).to(device).eval()
+    if variant == "local":
+        processor = _load_proc(base_dir, language, mode)
+        base_model = _load_whisper(base_dir).to(device).eval()
+        model = base_model
 
-        generate_model = model  # generate wywołujemy na tym obiekcie
-    else:
-        # LoRA: processor musi pochodzić z modelu bazowego
-        processor = WhisperProcessor.from_pretrained(
-            str(base_dir),
-            local_files_only=True,
-            language=language,
-            task=mode,
-        )
-        base = WhisperForConditionalGeneration.from_pretrained(
-            str(base_dir),
-            local_files_only=True,
-        )
-
-        # Ustawienia dekodera (często pomocne dla Whisper)
+    elif variant == "lora":
+        lora_adapters = Path(lora_out_dir) / "lora_adapters"
+        if not lora_adapters.exists():
+            raise FileNotFoundError(f"Nie znaleziono adapterów LoRA: {lora_adapters}")
+        processor = _load_proc(lora_out_dir, language, mode)
+        base = _load_whisper(base_dir)
         base.config.forced_decoder_ids = None
         base.config.suppress_tokens = []
-        base.generation_config.language = language
-        base.generation_config.task = mode
+        try:
+            base.generation_config.language = language
+            base.generation_config.task = mode
+        except Exception:
+            pass
+        model = PeftModel.from_pretrained(base, str(lora_adapters)).to(device).eval()
+        base_model = model.base_model
 
-        adapters_dir = _resolve_lora_adapters_dir(lora_out_dir)
-        model = PeftModel.from_pretrained(base, str(adapters_dir))
-        model = model.to(device).eval()
+    elif variant in ("merged", "full"):
+        # merged_dir wskazuje katalog modelu scalonego lub pełnotrenowanego
+        if not Path(merged_dir).exists():
+            lbl = "Merged" if variant == "merged" else "Full Trained"
+            raise FileNotFoundError(f"Nie znaleziono katalogu modelu ({lbl}): {merged_dir}")
+        processor = _load_proc(merged_dir, language, mode)
+        model = _load_whisper(merged_dir).to(device).eval()
+        base_model = model
 
-        # generate trzeba wykonywać na wrapperze PeftModel, żeby LoRA działała
-        generate_model = model
+    else:
+        raise ValueError(f"Nieznany wariant modelu: {variant}")
 
-    # Finalne ustawienia (nie zaszkodzi powtórzyć na obiekcie do generacji)
-    generate_model.config.forced_decoder_ids = None
-    generate_model.config.suppress_tokens = []
-    generate_model.generation_config.language = language
-    generate_model.generation_config.task = mode
+    # Ustawienia generacji (bez wymuszania)
+    base_model.config.forced_decoder_ids = None
+    base_model.config.suppress_tokens = []
+    try:
+        base_model.generation_config.language = language
+        base_model.generation_config.task = mode
+    except Exception:
+        pass
 
-    return processor, model, device, generate_model
-
+    return processor, model, device, base_model
 
 @torch.no_grad()
-def transcribe_chunk(audio_float_mono_16k, processor, generate_model, device, max_len: int = 225) -> str:
-    """
-    generate_model = obiekt zwrócony jako 4. element z load_model (Whisper lub PeftModel),
-    czyli dokładnie ten, na którym trzeba wywoływać .generate().
-    """
-    feats = processor(
-        audio_float_mono_16k,
-        sampling_rate=SR,
-        return_tensors="pt"
-    ).input_features.to(device)
-
-    ids = generate_model.generate(
-        feats,
-        max_length=max_len,
-        do_sample=False,
-        num_beams=1,
-    )
+def transcribe_chunk(audio_float_mono_16k, processor, base_model, device, max_len: int = 225) -> str:
+    feats = processor(audio_float_mono_16k, sampling_rate=SR, return_tensors="pt").input_features.to(device)
+    ids = base_model.generate(feats, max_length=max_len, do_sample=False, num_beams=1)
     return processor.tokenizer.batch_decode(ids, skip_special_tokens=True)[0].strip()

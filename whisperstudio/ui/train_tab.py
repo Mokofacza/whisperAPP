@@ -10,7 +10,7 @@ class TrainTab(QtWidgets.QWidget):
 
         form = QtWidgets.QFormLayout()
         self.data = QtWidgets.QLineEdit("flat_audio")
-        self.model = QtWidgets.QLineEdit("whisper-small-local")
+        self.model = QtWidgets.QLineEdit("openai/whisper-small")
         self.out_lora = QtWidgets.QLineEdit("whisper-small-pl-lora")
         self.out_full = QtWidgets.QLineEdit("whisper-small-pl-fullft")
         self.mode = QtWidgets.QComboBox(); self.mode.addItems(["LoRA", "Full FT"]); self.mode.setCurrentText("LoRA")

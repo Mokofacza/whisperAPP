@@ -19,20 +19,28 @@ def run_lora(
     lora_alpha: int = 32,
     lora_dropout: float = 0.05,
 ):
-    args = [
-        sys.executable, str(SCRIPT),
-        "--data-dir", data_dir,
-        "--model-dir", model_dir,
-        "--output-dir", output_dir,
-        "--language", language,
-        "--task", task,
-        "--batch-size", str(batch_size),
-        "--lr", str(lr),
-        "--epochs", str(epochs),
-        "--eval-interval", str(eval_interval),
-        "--early-stop", str(early_stop),
-        "--lora-r", str(lora_r),
-        "--lora-alpha", str(lora_alpha),
-        "--lora-dropout", str(lora_dropout),
-    ]
-    return subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    if SCRIPT.exists():
+        args = [
+            sys.executable, str(SCRIPT),
+            "--data-dir", data_dir,
+            "--model-dir", model_dir,
+            "--output-dir", output_dir,
+            "--language", language,
+            "--task", task,
+            "--batch-size", str(batch_size),
+            "--lr", str(lr),
+            "--epochs", str(epochs),
+            "--eval-interval", str(eval_interval),
+            "--early-stop", str(early_stop),
+            "--lora-r", str(lora_r),
+            "--lora-alpha", str(lora_alpha),
+            "--lora-dropout", str(lora_dropout),
+        ]
+        return subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    # Fallback: skrypt treningowy nie istnieje – wyświetl informację i zakończ
+    code = (
+        "import sys; "
+        "print('Brak pliku train_whisper_lora.py – trening pominięty.'); "
+        "sys.exit(0)"
+    )
+    return subprocess.Popen([sys.executable, "-c", code], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
