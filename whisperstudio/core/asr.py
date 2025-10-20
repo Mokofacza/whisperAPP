@@ -286,13 +286,22 @@ def transcribe_chunk(
     audio_f32_mono: np.ndarray,
     processor: WhisperProcessor,
     base: Dict,
-    device: str,
+    device: Optional[str] = None,
+    *_,  # <- ignorujemy ewentualne dodatkowe parametry od starszych wywołań
 ) -> str:
-    """Prosta transkrypcja kawałka audio (float32 mono @ 16k)."""
+    """
+    Prosta transkrypcja kawałka audio (float32 mono @ 16k).
+    Wspiera zarówno wywołania 4-argumentowe (nowe), jak i 5-argumentowe (stare).
+    """
     model: WhisperForConditionalGeneration = base["model"]
     task: str = base.get("task", "transcribe")
     language: str = base.get("language", "pl")
 
+    # jeśli nie podano device, spróbuj wziąć z debug lub domyślnie 'cpu'
+    if device is None:
+        device = base.get("debug", {}).get("device", "cpu")
+
+    # Normalizacja do szczytu
     peak = float(np.max(np.abs(audio_f32_mono))) or 1.0
     audio = (audio_f32_mono / peak).astype(np.float32, copy=False)
 
@@ -308,6 +317,10 @@ def transcribe_chunk(
         task=task,
         language=language,
         do_sample=False,
+        num_beams=4,           # stabilniejsze niż greedy
+        length_penalty=1.0,
+        early_stopping=True,
         max_new_tokens=224,
     )
     return processor.tokenizer.batch_decode(ids, skip_special_tokens=True)[0].strip()
+

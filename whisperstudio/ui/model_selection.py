@@ -79,8 +79,9 @@ class ModelSelector(QtWidgets.QGroupBox):
         layout.addWidget(self.combo)
         # startowo: local
         self.combo.setCurrentIndex(0)
-        self._on_change()
+        self._on_change() # Wywołaj ręcznie, aby zainicjować ścieżki
 
+    @QtCore.Slot()
     def _on_change(self):
         variant = self.combo.currentData()
         _CURRENT["variant"] = variant

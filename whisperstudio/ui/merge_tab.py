@@ -1,6 +1,26 @@
 from __future__ import annotations
-from PySide6 import QtWidgets
+from PySide6 import QtWidgets, QtCore
 from ..core.merge import merge_lora
+
+
+class MergeWorker(QtCore.QObject):
+    """Worker do scalania w osobnym wątku, by nie blokować GUI"""
+    finished = QtCore.Signal(str)  # Sygnał (wynik_lub_błąd)
+
+    def __init__(self, base: str, adapters: str, out: str):
+        super().__init__()
+        self.base = base
+        self.adapters = adapters
+        self.out = out
+
+    @QtCore.Slot()
+    def run(self):
+        try:
+            out_path = merge_lora(self.base, self.adapters, self.out)
+            self.finished.emit(f"Zapisano scalony model do: {out_path}")
+        except Exception as e:
+            self.finished.emit(f"[BŁĄD]\n{e}")
+
 
 class MergeTab(QtWidgets.QWidget):
     def __init__(self):
@@ -17,13 +37,52 @@ class MergeTab(QtWidgets.QWidget):
         v.addLayout(form)
 
         self.btn = QtWidgets.QPushButton("Scal i zapisz")
-        self.log = QtWidgets.QTextEdit(); self.log.setReadOnly(True)
-        v.addWidget(self.btn); v.addWidget(self.log, 1)
+        self.btn.setProperty("class", "Primary")
+        self.btn.setIcon(self.style().standardIcon(QtWidgets.QStyle.SP_DialogSaveButton))
+
+        self.log = QtWidgets.QTextEdit();
+        self.log.setReadOnly(True)
+        v.addWidget(self.btn);
+        v.addWidget(self.log, 1)
         self.btn.clicked.connect(self._run)
 
+        self.thread: Optional[QtCore.QThread] = None
+        self.worker: Optional[MergeWorker] = None
+
+    def _set_enabled(self, en: bool):
+        self.btn.setEnabled(en)
+        self.base.setEnabled(en)
+        self.adapters.setEnabled(en)
+        self.out.setEnabled(en)
+
     def _run(self):
-        try:
-            out = merge_lora(self.base.text().strip(), self.adapters.text().strip(), self.out.text().strip())
-            self.log.append(f"Zapisano scalony model do: {out}")
-        except Exception as e:
-            self.log.append(str(e))
+        if self.thread:  # Już działa
+            return
+
+        self._set_enabled(False)
+        self.log.clear()
+        self.log.append("Rozpoczynam scalanie...")
+
+        self.thread = QtCore.QThread(self)
+        self.worker = MergeWorker(
+            self.base.text().strip(),
+            self.adapters.text().strip(),
+            self.out.text().strip()
+        )
+        self.worker.moveToThread(self.thread)
+
+        self.thread.started.connect(self.worker.run)
+        self.worker.finished.connect(self._on_finish)
+
+        # Sprzątanie
+        self.worker.finished.connect(self.thread.quit)
+        self.worker.finished.connect(self.worker.deleteLater)
+        self.thread.finished.connect(self.thread.deleteLater)
+
+        self.thread.start()
+
+    def _on_finish(self, result: str):
+        self.log.append(result)
+        self._set_enabled(True)
+        self.thread = None
+        self.worker = None

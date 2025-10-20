@@ -8,6 +8,7 @@ from PySide6 import QtCore, QtGui, QtWidgets
 
 AUDIO_SUFFIXES = {".wav", ".mp3", ".m4a", ".flac", ".ogg", ".aac", ".wma", ".mka"}
 
+
 def _default_start_dir() -> Optional[Path]:
     """Preferuj ./flat_audio (jeśli istnieje), potem Music, potem Home."""
     try:
@@ -23,6 +24,7 @@ def _default_start_dir() -> Optional[Path]:
         if p.exists():
             return p
     return Path.home()
+
 
 class _AudioFilterProxy(QtCore.QSortFilterProxyModel):
     def __init__(self, suffixes: Iterable[str], parent=None):
@@ -47,11 +49,13 @@ class FileSystemPicker(QtWidgets.QDialog):
     - lista dysków (Windows)
     - filtr rozszerzeń audio
     """
+
     def __init__(self, parent=None, mode: str = "file", suffixes: Iterable[str] = AUDIO_SUFFIXES):
         super().__init__(parent)
         assert mode in ("file", "dir")
         self.mode = mode
         self._setting_root = False  # by nie zapętlać ust. napędu
+        style = self.style()  # Pobranie stylu dla ikon
 
         self.setWindowTitle("Wybierz plik" if mode == "file" else "Wybierz folder")
         self.resize(900, 560)
@@ -62,10 +66,14 @@ class FileSystemPicker(QtWidgets.QDialog):
         # Pasek narzędzi: Dysk / Up / Ścieżka
         tb = QtWidgets.QHBoxLayout()
         self.drive = QtWidgets.QComboBox()
-        self.btnUp = QtWidgets.QToolButton(); self.btnUp.setText("⬆")
-        self.pathEdit = QtWidgets.QLineEdit(); self.pathEdit.setReadOnly(True)
-        tb.addWidget(QtWidgets.QLabel("Dysk:")); tb.addWidget(self.drive)
-        tb.addWidget(self.btnUp); tb.addWidget(self.pathEdit, 1)
+        self.btnUp = QtWidgets.QToolButton()
+        self.btnUp.setIcon(style.standardIcon(QtWidgets.QStyle.SP_ArrowUp))
+        self.pathEdit = QtWidgets.QLineEdit();
+        self.pathEdit.setReadOnly(True)
+        tb.addWidget(QtWidgets.QLabel("Dysk:"));
+        tb.addWidget(self.drive)
+        tb.addWidget(self.btnUp);
+        tb.addWidget(self.pathEdit, 1)
         v.addLayout(tb)
 
         # Model FS
@@ -93,12 +101,20 @@ class FileSystemPicker(QtWidgets.QDialog):
             self.proxy = _AudioFilterProxy(suffixes, self)
             self.proxy.setSourceModel(self.model)
             self.view.setModel(self.proxy)
+            self.view.sortByColumn(0, QtCore.Qt.AscendingOrder)  # Sortuj po nazwie
 
         # Pasek dołu: przyciski
         h = QtWidgets.QHBoxLayout()
-        self.btnChoose = QtWidgets.QPushButton("Wybierz"); self.btnChoose.setDefault(True)
+        self.btnChoose = QtWidgets.QPushButton("Wybierz");
+        self.btnChoose.setDefault(True)
+        self.btnChoose.setIcon(style.standardIcon(QtWidgets.QStyle.SP_DialogOkButton))
+
         self.btnCancel = QtWidgets.QPushButton("Anuluj")
-        h.addStretch(1); h.addWidget(self.btnChoose); h.addWidget(self.btnCancel)
+        self.btnCancel.setIcon(style.standardIcon(QtWidgets.QStyle.SP_DialogCancelButton))
+
+        h.addStretch(1);
+        h.addWidget(self.btnChoose);
+        h.addWidget(self.btnCancel)
         v.addLayout(h)
 
         # Dyski (Windows)
@@ -117,21 +133,29 @@ class FileSystemPicker(QtWidgets.QDialog):
 
         # Skróty
         QtGui.QShortcut(QtGui.QKeySequence(QtCore.Qt.Key_Return), self, activated=self.accept)
-        QtGui.QShortcut(QtGui.QKeySequence(QtCore.Qt.Key_Enter),  self, activated=self.accept)
+        QtGui.QShortcut(QtGui.QKeySequence(QtCore.Qt.Key_Enter), self, activated=self.accept)
         QtGui.QShortcut(QtGui.QKeySequence(QtCore.Qt.Key_Escape), self, activated=self.reject)
         QtGui.QShortcut(QtGui.QKeySequence("Alt+Up"), self, activated=self._go_up)
+        QtGui.QShortcut(QtGui.QKeySequence(QtCore.Qt.Key_Backspace), self, activated=self._go_up)
 
     # ---- API ----
     def selected_path(self) -> Optional[Path]:
         idx = self.view.currentIndex()
         if not idx.isValid():
+            # Jeśli nic nie zaznaczono, a jesteśmy w trybie 'dir', zwróć obecny folder
+            if self.mode == "dir":
+                return Path(self.pathEdit.text())
             return None
+
         src = self.proxy.mapToSource(idx) if self.proxy else idx
         info = self.model.fileInfo(src)
+
         if self.mode == "dir":
             return Path(info.absoluteFilePath() if info.isDir() else info.absolutePath())
+
+        # Tryb 'file'
         if info.isDir():
-            return None
+            return None  # Nie wybrano pliku
         return Path(info.absoluteFilePath())
 
     @staticmethod
@@ -148,9 +172,14 @@ class FileSystemPicker(QtWidgets.QDialog):
     def _set_root(self, path: Optional[Path]):
         if path is None:
             return
-        path = path.resolve()
+        try:
+            path = path.resolve()
+        except Exception:  # Np. niedostępny dysk
+            return
+
         idx_src = self.model.index(str(path))
         idx = self.proxy.mapFromSource(idx_src) if self.proxy else idx_src
+
         if idx.isValid():
             self._setting_root = True
             try:
@@ -163,12 +192,16 @@ class FileSystemPicker(QtWidgets.QDialog):
                         anchor = anchor + "\\"
                     self.drive.blockSignals(True)
                     # jeśli anchor jest na liście – ustaw; w innym razie nie zmieniaj
-                    ix = self.drive.findText(anchor)
+                    ix = self.drive.findText(anchor, QtCore.Qt.MatchStartsWith)
                     if ix >= 0:
                         self.drive.setCurrentIndex(ix)
                     self.drive.blockSignals(False)
             finally:
                 self._setting_root = False
+        else:
+            # Jeśli ścieżka jest nieprawidłowa (np. nie istnieje), spróbuj rodzica
+            if path.parent != path:
+                self._set_root(path.parent)
 
     def _go_up(self):
         cur = Path(self.pathEdit.text()) if self.pathEdit.text() else None
@@ -188,11 +221,11 @@ class FileSystemPicker(QtWidgets.QDialog):
         self.drive.clear()
         if sys.platform.startswith("win"):
             for d in QtCore.QDir.drives():
-                self.drive.addItem(d.absolutePath())
+                self.drive.addItem(d.absolutePath(), d.absolutePath())
         else:
             # na *nix pokaż korzeń i home
-            self.drive.addItem("/")
-            self.drive.addItem(str(Path.home()))
+            self.drive.addItem("/", "/")
+            self.drive.addItem(str(Path.home()), str(Path.home()))
 
     # ---- Zdarzenia ----
     def _on_double_click(self, idx: QtCore.QModelIndex):
@@ -201,10 +234,17 @@ class FileSystemPicker(QtWidgets.QDialog):
         if info.isDir():
             self._set_root(Path(info.absoluteFilePath()))
         else:
-            # plik: akceptuj
-            self.accept()
+            # plik: akceptuj (tylko w trybie file)
+            if self.mode == "file":
+                self.accept()
 
     def _on_selection(self, *_):
         p = self.selected_path()
-        if p:
+        if p and self.mode == "file":  # W trybie 'dir' nie aktualizuj ścieżki na zaznaczony folder
             self.pathEdit.setText(str(p))
+        elif self.mode == "dir":
+            # W trybie dir, ścieżka na górze zawsze pokazuje obecny folder (root)
+            root_idx = self.view.rootIndex()
+            src_root = self.proxy.mapToSource(root_idx) if self.proxy else root_idx
+            info = self.model.fileInfo(src_root)
+            self.pathEdit.setText(info.absoluteFilePath())
